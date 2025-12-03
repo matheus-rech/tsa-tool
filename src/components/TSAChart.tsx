@@ -1,6 +1,6 @@
 import { useRef, useEffect } from 'react';
 import { TSAResults, TSAParams } from '@/types';
-import { obrienFlemingBoundary, normalQuantile } from '@/lib/statistics';
+import { computeMonitoringBoundary, computeFutilityBoundary, normalQuantile } from '@/lib/statistics';
 
 interface TSAChartProps {
   results: TSAResults;
@@ -150,7 +150,7 @@ export function TSAChart({ results, params }: TSAChartProps) {
       ctx.font = '10px "IBM Plex Mono", monospace';
       ctx.fillText(`Z = ±${zAlpha.toFixed(2)}`, width - padding.right + 5, yScale(zAlpha) + 4);
 
-      // Draw O'Brien-Fleming monitoring boundaries
+      // Draw O'Brien-Fleming monitoring boundaries (Lan-DeMets spending)
       ctx.strokeStyle = '#ef4444';
       ctx.lineWidth = 2.5;
 
@@ -159,7 +159,7 @@ export function TSAChart({ results, params }: TSAChartProps) {
       let first = true;
       for (let i = 2; i <= 100; i++) {
         const frac = (i / 100) * maxInfoFraction;
-        const boundary = Math.min(obrienFlemingBoundary(frac, params.alpha), 8);
+        const boundary = Math.min(computeMonitoringBoundary(frac, params.alpha), 8);
         const x = xScale(frac);
         const y = yScale(boundary);
         if (first) { ctx.moveTo(x, y); first = false; }
@@ -172,13 +172,13 @@ export function TSAChart({ results, params }: TSAChartProps) {
       first = true;
       for (let i = 2; i <= 100; i++) {
         const frac = (i / 100) * maxInfoFraction;
-        const boundary = -Math.min(obrienFlemingBoundary(frac, params.alpha), 8);
+        const boundary = -Math.min(computeMonitoringBoundary(frac, params.alpha), 8);
         if (first) { ctx.moveTo(xScale(frac), yScale(boundary)); first = false; }
         else ctx.lineTo(xScale(frac), yScale(boundary));
       }
       ctx.stroke();
 
-      // Draw futility boundaries (inner wedge)
+      // Draw futility boundaries (beta-spending inner wedge)
       ctx.strokeStyle = '#f59e0b';
       ctx.lineWidth = 2;
       ctx.setLineDash([6, 4]);
@@ -188,7 +188,7 @@ export function TSAChart({ results, params }: TSAChartProps) {
       first = true;
       for (let i = 2; i <= 100; i++) {
         const frac = (i / 100) * maxInfoFraction;
-        const boundary = Math.min(obrienFlemingBoundary(frac, params.alpha) * 0.5, 8);
+        const boundary = Math.min(computeFutilityBoundary(frac, params.beta), 8);
         if (first) { ctx.moveTo(xScale(frac), yScale(boundary)); first = false; }
         else ctx.lineTo(xScale(frac), yScale(boundary));
       }
@@ -199,7 +199,7 @@ export function TSAChart({ results, params }: TSAChartProps) {
       first = true;
       for (let i = 2; i <= 100; i++) {
         const frac = (i / 100) * maxInfoFraction;
-        const boundary = -Math.min(obrienFlemingBoundary(frac, params.alpha) * 0.5, 8);
+        const boundary = -Math.min(computeFutilityBoundary(frac, params.beta), 8);
         if (first) { ctx.moveTo(xScale(frac), yScale(boundary)); first = false; }
         else ctx.lineTo(xScale(frac), yScale(boundary));
       }
@@ -210,10 +210,10 @@ export function TSAChart({ results, params }: TSAChartProps) {
       // Benefit area (green tint above upper monitoring)
       ctx.fillStyle = 'rgba(34, 197, 94, 0.08)';
       ctx.beginPath();
-      ctx.moveTo(xScale(0.02), yScale(Math.min(obrienFlemingBoundary(0.02, params.alpha), 8)));
+      ctx.moveTo(xScale(0.02), yScale(Math.min(computeMonitoringBoundary(0.02, params.alpha), 8)));
       for (let i = 2; i <= 100; i++) {
         const frac = (i / 100) * maxInfoFraction;
-        const boundary = Math.min(obrienFlemingBoundary(frac, params.alpha), 8);
+        const boundary = Math.min(computeMonitoringBoundary(frac, params.alpha), 8);
         ctx.lineTo(xScale(frac), yScale(boundary));
       }
       ctx.lineTo(width - padding.right, padding.top);
@@ -224,10 +224,10 @@ export function TSAChart({ results, params }: TSAChartProps) {
       // Harm area (red tint below lower monitoring)
       ctx.fillStyle = 'rgba(239, 68, 68, 0.08)';
       ctx.beginPath();
-      ctx.moveTo(xScale(0.02), yScale(-Math.min(obrienFlemingBoundary(0.02, params.alpha), 8)));
+      ctx.moveTo(xScale(0.02), yScale(-Math.min(computeMonitoringBoundary(0.02, params.alpha), 8)));
       for (let i = 2; i <= 100; i++) {
         const frac = (i / 100) * maxInfoFraction;
-        const boundary = -Math.min(obrienFlemingBoundary(frac, params.alpha), 8);
+        const boundary = -Math.min(computeMonitoringBoundary(frac, params.alpha), 8);
         ctx.lineTo(xScale(frac), yScale(boundary));
       }
       ctx.lineTo(width - padding.right, height - padding.bottom);

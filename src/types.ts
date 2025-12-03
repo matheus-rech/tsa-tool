@@ -20,12 +20,16 @@ export interface ContinuousStudy {
   nCtrl: number;
 }
 
+export type FutilityBoundaryType = 'none' | 'obrien-fleming' | 'pocock' | 'conditional-power';
+
 export interface TSAParams {
   alpha: number;
   beta: number;
   controlRate: number;
   effectSize: number;
   heterogeneityCorrection: number;
+  futilityBoundaryType?: FutilityBoundaryType;
+  useI2Adjustment?: boolean;
 }
 
 export interface CumulativeDataPoint {
@@ -38,6 +42,8 @@ export interface CumulativeDataPoint {
   pooledOR: number;
   ci95Lower: number;
   ci95Upper: number;
+  alphaSpent: number;
+  betaSpent: number;
 }
 
 export interface HeterogeneityStats {

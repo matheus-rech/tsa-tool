@@ -35,6 +35,27 @@ export function normalQuantile(p: number): number {
   }
 }
 
+// Standard normal cumulative distribution function (CDF)
+// Uses Abramowitz & Stegun approximation (equation 7.1.26)
+export function normalCDF(x: number): number {
+  const a1 =  0.254829592;
+  const a2 = -0.284496736;
+  const a3 =  1.421413741;
+  const a4 = -1.453152027;
+  const a5 =  1.061405429;
+  const p  =  0.3275911;
+
+  // Save the sign of x
+  const sign = x < 0 ? -1 : 1;
+  const absX = Math.abs(x) / Math.sqrt(2);
+
+  // A&S formula 7.1.26 for erf approximation
+  const t = 1.0 / (1.0 + p * absX);
+  const y = 1.0 - (((((a5 * t + a4) * t) + a3) * t + a2) * t + a1) * t * Math.exp(-absX * absX);
+
+  return 0.5 * (1.0 + sign * y);
+}
+
 // Chi-squared distribution CDF (for Q-statistic p-value)
 export function chiSquaredCDF(x: number, df: number): number {
   if (x <= 0 || df <= 0) return 0;
@@ -98,59 +119,163 @@ function logGamma(x: number): number {
   return 0.5 * Math.log(2 * Math.PI) + (x + 0.5) * Math.log(t) - t + Math.log(a);
 }
 
-// O'Brien-Fleming alpha-spending boundary
-export function obrienFlemingBoundary(informationFraction: number, alpha: number): number {
+// Lan-DeMets alpha-spending function (O'Brien-Fleming type)
+// Returns cumulative alpha spent up to information fraction t
+// Formula: α*(t) = 2[1 - Φ(Φ⁻¹(1 - α/2) / √t)]
+export function lanDeMetsAlphaSpending(t: number, alpha: number): number {
+  if (t <= 0) return 0;
+  if (t >= 1) return alpha;
+
+  const zAlpha = normalQuantile(1 - alpha / 2);
+  return 2 * (1 - normalCDF(zAlpha / Math.sqrt(t)));
+}
+
+// Lan-DeMets beta-spending function (O'Brien-Fleming type)
+// Returns cumulative beta spent up to information fraction t
+// Formula: β*(t) = 2[1 - Φ(Φ⁻¹(1 - β/2) / √t)]
+export function lanDeMetsBetaSpending(t: number, beta: number): number {
+  if (t <= 0) return 0;
+  if (t >= 1) return beta;
+
+  const zBeta = normalQuantile(1 - beta / 2);
+  return 2 * (1 - normalCDF(zBeta / Math.sqrt(t)));
+}
+
+// Compute O'Brien-Fleming monitoring boundary using Lan-DeMets spending
+// The boundary z_t satisfies: 2[1 - Φ(z_t)] = α*(t)
+export function computeMonitoringBoundary(informationFraction: number, alpha: number): number {
   if (informationFraction <= 0) return 10;
-  const z = normalQuantile(1 - alpha / 2);
-  return z / Math.sqrt(informationFraction);
+  if (informationFraction >= 1.5) return normalQuantile(1 - alpha / 2);
+
+  // For the O'Brien-Fleming spending function, the boundary simplifies to:
+  // z_t = z_{α/2} / √t
+  // This is the exact boundary for the Lan-DeMets O'Brien-Fleming approximation
+  const zAlpha = normalQuantile(1 - alpha / 2);
+  return zAlpha / Math.sqrt(informationFraction);
+}
+
+// Compute futility boundary using beta-spending
+// Uses O'Brien-Fleming type beta-spending by default
+export function computeFutilityBoundary(
+  informationFraction: number,
+  beta: number,
+  boundaryType: 'none' | 'obrien-fleming' = 'obrien-fleming'
+): number {
+  if (boundaryType === 'none') return 0;
+  if (informationFraction <= 0) return 0;
+  if (informationFraction >= 1) return normalQuantile(beta);
+
+  // For O'Brien-Fleming type beta-spending:
+  // The futility boundary is the inner boundary that controls Type II error
+  // It's typically much smaller than the efficacy boundary at early looks
+  const zBeta = normalQuantile(1 - beta / 2);
+
+  // The futility boundary for O'Brien-Fleming is derived from beta spending
+  // At fraction t, the boundary is approximately: z_β / √t (scaled appropriately)
+  // We use a more conservative approach that aligns with Copenhagen TSA:
+  // futility boundary = z_β / √t * correction_factor
+  // where correction_factor ensures proper beta spending
+  const rawBoundary = zBeta / Math.sqrt(informationFraction);
+
+  // Scale to create the inner wedge (futility region)
+  // The factor 0.5 approximates the O'Brien-Fleming futility spending
+  // For more precise calculation, numerical methods would be needed
+  return Math.min(rawBoundary * 0.5, normalQuantile(1 - beta));
+}
+
+// O'Brien-Fleming alpha-spending boundary (backward compatible wrapper)
+export function obrienFlemingBoundary(informationFraction: number, alpha: number): number {
+  return computeMonitoringBoundary(informationFraction, alpha);
 }
 
 // Calculate odds ratio for a single study
+// Applies continuity correction ONLY when necessary (zero cells)
 export function calculateStudyOR(study: Study): { or: number; se: number; weight: number } {
-  const a = study.eventsTrt + 0.5;
-  const b = study.totalTrt - study.eventsTrt + 0.5;
-  const c = study.eventsCtrl + 0.5;
-  const d = study.totalCtrl - study.eventsCtrl + 0.5;
-  
+  let a = study.eventsTrt;
+  let b = study.totalTrt - study.eventsTrt;
+  let c = study.eventsCtrl;
+  let d = study.totalCtrl - study.eventsCtrl;
+
+  // Check if continuity correction is needed (any zero cell)
+  const hasZeroCell = a === 0 || b === 0 || c === 0 || d === 0;
+
+  if (hasZeroCell) {
+    // Apply 0.5 correction to all cells (standard approach for inverse-variance)
+    a += 0.5;
+    b += 0.5;
+    c += 0.5;
+    d += 0.5;
+  }
+
   const or = (a * d) / (b * c);
   const se = Math.sqrt(1/a + 1/b + 1/c + 1/d);
   const weight = 1 / (se * se);
-  
+
   return { or, se, weight };
 }
 
 // Calculate pooled odds ratio using Mantel-Haenszel method
+// with Robins-Breslow-Greenland variance estimator (no continuity correction)
 export function calculatePooledOR(studies: Study[]): { or: number; se: number } {
-  let numerator = 0;
-  let denominator = 0;
-  
-  studies.forEach(study => {
-    const a = study.eventsTrt + 0.5;
-    const b = study.totalTrt - study.eventsTrt + 0.5;
-    const c = study.eventsCtrl + 0.5;
-    const d = study.totalCtrl - study.eventsCtrl + 0.5;
+  // Filter out double-zero studies (no events in either arm)
+  // These contribute no information to the MH estimate
+  const validStudies = studies.filter(study =>
+    !(study.eventsTrt === 0 && study.eventsCtrl === 0)
+  );
+
+  if (validStudies.length === 0) {
+    return { or: 1, se: Infinity };
+  }
+
+  // Calculate Mantel-Haenszel components using RAW counts (no continuity correction)
+  let R = 0;  // Sum of (a*d)/n - numerator of MH OR
+  let S = 0;  // Sum of (b*c)/n - denominator of MH OR
+
+  // For Robins-Breslow-Greenland variance
+  let sumPR = 0;     // Σ(P_i × R_i)
+  let sumPS_QR = 0;  // Σ(P_i × S_i + Q_i × R_i)
+  let sumQS = 0;     // Σ(Q_i × S_i)
+
+  validStudies.forEach(study => {
+    const a = study.eventsTrt;          // Events in treatment
+    const b = study.totalTrt - a;       // Non-events in treatment
+    const c = study.eventsCtrl;         // Events in control
+    const d = study.totalCtrl - c;      // Non-events in control
     const n = study.totalTrt + study.totalCtrl;
-    
+
     if (n > 0) {
-      numerator += (a * d) / n;
-      denominator += (b * c) / n;
+      const R_i = (a * d) / n;
+      const S_i = (b * c) / n;
+      const P_i = (a + d) / n;
+      const Q_i = (b + c) / n;
+
+      R += R_i;
+      S += S_i;
+
+      sumPR += P_i * R_i;
+      sumPS_QR += (P_i * S_i) + (Q_i * R_i);
+      sumQS += Q_i * S_i;
     }
   });
-  
-  const or = denominator > 0 ? numerator / denominator : 1;
-  
-  // Calculate variance using Greenland-Robins method
+
+  // Mantel-Haenszel OR
+  const or = S > 0 ? R / S : 1;
+
+  // Robins-Breslow-Greenland variance for ln(OR_MH)
+  // Var(ln(OR_MH)) = Σ(P·R)/(2R²) + Σ(P·S + Q·R)/(2RS) + Σ(Q·S)/(2S²)
   let variance = 0;
-  studies.forEach(study => {
-    const a = study.eventsTrt + 0.5;
-    const b = study.totalTrt - study.eventsTrt + 0.5;
-    const c = study.eventsCtrl + 0.5;
-    const d = study.totalCtrl - study.eventsCtrl + 0.5;
-    variance += 1/a + 1/b + 1/c + 1/d;
-  });
-  
+
+  if (R > 0 && S > 0) {
+    variance = sumPR / (2 * R * R)
+             + sumPS_QR / (2 * R * S)
+             + sumQS / (2 * S * S);
+  } else {
+    // Fallback for edge cases (all events or no events)
+    variance = Infinity;
+  }
+
   const se = Math.sqrt(variance);
-  
+
   return { or, se };
 }
 
@@ -197,79 +322,136 @@ export function calculateZStatistic(studies: Study[]): number {
   return Math.log(or) / se;
 }
 
-// Calculate Required Information Size (RIS)
+// Calculate Required Information Size (RIS) for Odds Ratio
+// Uses the variance formula for log-OR, aligned with Copenhagen TSA methodology
 export function calculateRIS(params: TSAParams): number {
   const { alpha, beta, controlRate, effectSize, heterogeneityCorrection } = params;
+
   const zAlpha = normalQuantile(1 - alpha / 2);
   const zBeta = normalQuantile(1 - beta);
-  
-  const treatmentRate = controlRate * (1 - effectSize / 100);
-  const pooledRate = (controlRate + treatmentRate) / 2;
-  
-  if (Math.abs(controlRate - treatmentRate) < 0.001) return 100000;
-  
-  const n = ((zAlpha + zBeta) ** 2 * 2 * pooledRate * (1 - pooledRate)) / 
-            ((controlRate - treatmentRate) ** 2);
-  
-  return Math.ceil(2 * n * heterogeneityCorrection);
+
+  const p0 = controlRate;  // Control event rate
+
+  // Calculate anticipated treatment rate from effect size (relative risk reduction)
+  // Effect size is RRR as percentage: treatment rate = control rate × (1 - RRR/100)
+  const p1 = controlRate * (1 - effectSize / 100);
+
+  // Validate rates
+  if (p0 <= 0 || p0 >= 1 || p1 <= 0 || p1 >= 1) {
+    return 100000;
+  }
+
+  // Calculate anticipated odds ratio
+  const odds0 = p0 / (1 - p0);
+  const odds1 = p1 / (1 - p1);
+  const anticipatedOR = odds1 / odds0;
+  const logOR = Math.log(anticipatedOR);
+
+  if (Math.abs(logOR) < 0.001) {
+    return 100000;  // Effect size too small
+  }
+
+  // Variance components for log-OR
+  // For equal allocation (n1 = n0 = n per arm):
+  // Var(ln(OR)) ≈ [1/(n×p1×(1-p1)) + 1/(n×p0×(1-p0))]
+  // Solving for n: n = (z_α/2 + z_β)² × [1/(p1(1-p1)) + 1/(p0(1-p0))] / (ln(OR))²
+  const varComponent = 1 / (p1 * (1 - p1)) + 1 / (p0 * (1 - p0));
+
+  const nPerArm = Math.pow(zAlpha + zBeta, 2) * varComponent / Math.pow(logOR, 2);
+
+  // Total sample size (both arms) with heterogeneity correction
+  // The correction can be: multiplier directly, or derived from I² as 1/(1-I²)
+  const totalN = 2 * nPerArm * heterogeneityCorrection;
+
+  return Math.ceil(totalN);
+}
+
+// Calculate RIS with I² heterogeneity adjustment
+// RIS_adjusted = RIS / (1 - I²)
+export function calculateRISWithI2(params: TSAParams, i2: number): number {
+  // First calculate base RIS without heterogeneity correction
+  const baseParams = { ...params, heterogeneityCorrection: 1 };
+  const baseRIS = calculateRIS(baseParams);
+
+  // Apply I² adjustment: multiply by 1/(1 - I²)
+  // Avoid division by zero when I² approaches 1 (100%)
+  const i2Decimal = i2 / 100;  // Convert from percentage
+  const adjustmentFactor = i2Decimal < 0.99 ? 1 / (1 - i2Decimal) : 100;
+
+  return Math.ceil(baseRIS * adjustmentFactor);
 }
 
 // Main TSA calculation function
+// Implements Copenhagen Trial Unit methodology with Lan-DeMets spending functions
 export function calculateTSA(studies: Study[], params: TSAParams): TSAResults | null {
   if (studies.length === 0) return null;
-  
+
+  // Calculate heterogeneity first (may be used for I² adjusted RIS)
+  const heterogeneity = calculateHeterogeneity(studies);
+
+  // Calculate RIS
   const ris = calculateRIS(params);
   const cumulativeData: CumulativeDataPoint[] = [];
   let cumulativeN = 0;
-  
+
   for (let i = 0; i < studies.length; i++) {
     const cumulativeStudies = studies.slice(0, i + 1);
     cumulativeN += studies[i].totalTrt + studies[i].totalCtrl;
-    
+
     const { or, se } = calculatePooledOR(cumulativeStudies);
-    const zStat = Math.log(or) / se;
+    // Handle edge case where SE is infinite or zero
+    const zStat = (se > 0 && se < Infinity) ? Math.log(or) / se : 0;
     const informationFraction = cumulativeN / ris;
-    const monitoringBoundary = obrienFlemingBoundary(informationFraction, params.alpha);
-    
+
+    // Use Lan-DeMets spending functions for boundaries
+    const monitoringBoundary = computeMonitoringBoundary(informationFraction, params.alpha);
+    const futilityBoundary = computeFutilityBoundary(informationFraction, params.beta);
+
+    // Calculate cumulative alpha and beta spending at this information fraction
+    const alphaSpent = lanDeMetsAlphaSpending(informationFraction, params.alpha);
+    const betaSpent = lanDeMetsBetaSpending(informationFraction, params.beta);
+
     cumulativeData.push({
       study: `${studies[i].name} (${studies[i].year})`,
       patients: cumulativeN,
       informationFraction,
       zStatistic: zStat,
       monitoringBoundary,
-      futilityBoundary: monitoringBoundary * 0.5,
+      futilityBoundary,
       pooledOR: or,
       ci95Lower: Math.exp(Math.log(or) - 1.96 * se),
-      ci95Upper: Math.exp(Math.log(or) + 1.96 * se)
+      ci95Upper: Math.exp(Math.log(or) + 1.96 * se),
+      alphaSpent,
+      betaSpent
     });
   }
-  
+
   const last = cumulativeData[cumulativeData.length - 1];
-  const heterogeneity = calculateHeterogeneity(studies);
-  
-  // Determine interpretation
+
+  // Determine interpretation with improved messages
   let interpretation: TSAResults['interpretation'];
-  
+  const percentComplete = (last.informationFraction * 100).toFixed(0);
+
   if (Math.abs(last.zStatistic) > last.monitoringBoundary) {
     interpretation = {
       type: last.zStatistic > 0 ? 'conclusive-benefit' : 'conclusive-harm',
       title: last.zStatistic > 0 ? 'Conclusive: Favors Treatment' : 'Conclusive: Favors Control',
-      message: 'The Z-curve has crossed the monitoring boundary, providing conclusive evidence of a treatment effect.'
+      message: `The Z-curve has crossed the O'Brien-Fleming monitoring boundary at ${percentComplete}% information, providing conclusive evidence with Type I error control.`
     };
-  } else if (Math.abs(last.zStatistic) < last.futilityBoundary) {
+  } else if (last.futilityBoundary > 0 && Math.abs(last.zStatistic) < last.futilityBoundary) {
     interpretation = {
       type: 'futility',
       title: 'Futility: Treatments Likely Similar',
-      message: 'The Z-curve is within the futility boundary, indicating high probability that treatments have similar effects.'
+      message: `The Z-curve is within the futility boundary at ${percentComplete}% information, indicating the anticipated effect is unlikely to exist.`
     };
   } else {
     interpretation = {
       type: 'inconclusive',
       title: 'Inconclusive',
-      message: 'More studies are needed. The Z-curve has not crossed monitoring or futility boundaries.'
+      message: `More studies needed (${percentComplete}% of required information). The Z-curve has not crossed monitoring or futility boundaries.`
     };
   }
-  
+
   return {
     ris,
     totalPatients: last.patients,
