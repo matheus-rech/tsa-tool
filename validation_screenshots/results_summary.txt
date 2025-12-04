@@ -1,0 +1,21 @@
+TSA Tool Results Summary
+==================================================
+
+Dataset: TRA vs TFA
+Interpretation: Conclusive: Favors Control
+Details:
+Results SummaryRequired Info Size1,987Accrued Patients4,290Information Fraction215.9%Z-Score-2.26Pooled OR0.63 [0.42, 0.94]Heterogeneity (I²)36.1%
+--------------------------------------------------
+
+Dataset: Hypothermia
+Interpretation: Conclusive: Favors Treatment
+Details:
+Results SummaryRequired Info Size1,051Accrued Patients421Information Fraction40.1%Z-Score3.39Pooled OR2.04 [1.35, 3.08]Heterogeneity (I²)0.0%
+--------------------------------------------------
+
+Dataset: COVID-19
+Interpretation: Conclusive: Favors Control
+Details:
+Results SummaryRequired Info Size3,295Accrued Patients7,559Information Fraction229.4%Z-Score-3.48Pooled OR0.82 [0.74, 0.92]Heterogeneity (I²)0.0%
+--------------------------------------------------
+
